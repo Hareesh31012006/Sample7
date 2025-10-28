@@ -1,8 +1,8 @@
-=========================================================
+
 
  Stock Sentiment & Price Prediction Dashboard
 
-=========================================================
+
 
 import os
 
@@ -32,19 +32,18 @@ import torch.nn as nn
 
 from datetime import datetime, timedelta
 
-=========================================================
+
 
  SET YOUR API KEY HERE
 
-=========================================================
 
 ALPHA_VANTAGE_API_KEY = "9EJ41V9XS6Q5ZN1Y"  #  Replace with your key
 
-=========================================================
+
 
 Streamlit App Setup
 
-=========================================================
+
 
 st.set_page_config(page_title="Stock Sentiment Predictor", layout="wide")
 
@@ -52,11 +51,11 @@ st.title("📈 Stock Sentiment + Price Prediction Dashboard")
 
 st.write("Predict stock trends using sentiment and deep learning models.")
 
-=========================================================
+
 
  Sentiment Analysis Utilities
 
-=========================================================
+
 
 @st.cache_data
 
@@ -76,11 +75,11 @@ return pipeline("sentiment-analysis")
 
 hf_pipeline = get_hf_sentiment()
 
-=========================================================
+
 
  Fetch News
 
-=========================================================
+
 
 @st.cache_data
 
@@ -90,11 +89,11 @@ google_news = GNews(language="en", max_results=10)
 
 return google_news.get_news(symbol)
 
-=========================================================
+
 
  Fetch Stock Data
 
-=========================================================
+
 
 @st.cache_data
 
@@ -122,11 +121,11 @@ data.index = pd.to_datetime(data.index)
 
 return data.sort_index()
 
-=========================================================
+
 
  Simple PyTorch Regression Model (Fixed)
 
-=========================================================
+
 
 def train_model(X, y):
 
@@ -152,11 +151,11 @@ for _ in range(150):
 
 return model
 
-=========================================================
+
 
  Analyze Stock
 
-=========================================================
+
 
 def analyze_stock(symbol):
 
@@ -222,11 +221,11 @@ suggestion = "📈 Buy" if next_pred > df["Close"].iloc[-1] and avg_sentiment > 
 
 return df, sent_df, next_pred, suggestion
 
-=========================================================
+
 
  Streamlit UI
 
-=========================================================
+
 
 symbol = st.text_input("Enter Stock Symbol (e.g. AAPL, TSLA, MSFT):", "AAPL")
 
@@ -264,11 +263,11 @@ sns.histplot(sent_df["TextBlob"], bins=10, kde=True, ax=ax)
 
 st.pyplot(fig)
 
-=========================================================
+
 
  Footer
 
-=========================================================
+
 
 st.markdown("---")
 

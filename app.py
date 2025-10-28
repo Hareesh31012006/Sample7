@@ -274,4 +274,4 @@ st.markdown("---")
 
 st.caption("Built with ❤️ using Streamlit, PyTorch, and HuggingFace.")
 
-Gimme algorithms and pseudocode for this
+

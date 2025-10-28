@@ -1,6 +1,6 @@
 =========================================================
 
-📊 Stock Sentiment & Price Prediction Dashboard
+ Stock Sentiment & Price Prediction Dashboard
 
 =========================================================
 
@@ -34,15 +34,15 @@ from datetime import datetime, timedelta
 
 =========================================================
 
-🔑 SET YOUR API KEY HERE
+ SET YOUR API KEY HERE
 
 =========================================================
 
-ALPHA_VANTAGE_API_KEY = "9EJ41V9XS6Q5ZN1Y"  # 👈 Replace with your key
+ALPHA_VANTAGE_API_KEY = "9EJ41V9XS6Q5ZN1Y"  #  Replace with your key
 
 =========================================================
 
-🏗️ Streamlit App Setup
+Streamlit App Setup
 
 =========================================================
 
@@ -54,7 +54,7 @@ st.write("Predict stock trends using sentiment and deep learning models.")
 
 =========================================================
 
-🧠 Sentiment Analysis Utilities
+ Sentiment Analysis Utilities
 
 =========================================================
 
@@ -78,7 +78,7 @@ hf_pipeline = get_hf_sentiment()
 
 =========================================================
 
-📰 Fetch News
+ Fetch News
 
 =========================================================
 
@@ -92,7 +92,7 @@ return google_news.get_news(symbol)
 
 =========================================================
 
-💹 Fetch Stock Data
+ Fetch Stock Data
 
 =========================================================
 
@@ -124,7 +124,7 @@ return data.sort_index()
 
 =========================================================
 
-🧮 Simple PyTorch Regression Model (Fixed)
+ Simple PyTorch Regression Model (Fixed)
 
 =========================================================
 
@@ -154,7 +154,7 @@ return model
 
 =========================================================
 
-🔍 Analyze Stock
+ Analyze Stock
 
 =========================================================
 

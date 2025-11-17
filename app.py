@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 # -----------------------------
 # SET YOUR API KEY HERE
 # -----------------------------
-ALPHA_VANTAGE_API_KEY = "2Q96IJ3NG4FRN2GX"  # Replace with your key
+ALPHA_VANTAGE_API_KEY = "9EJ41V9XS6Q5ZN1Y"  # Replace with your key
 
 # -----------------------------
 # Streamlit App Setup

@@ -11,12 +11,14 @@ from transformers import pipeline
 import torch
 import torch.nn as nn
 from datetime import datetime, timedelta
-import feedparser   # <-- added for RSS fallback
+import feedparser  # RSS fallback
 
 # -----------------------------
-# SET YOUR API KEY HERE
+# SET YOUR API KEY (ENV-SAFE)
 # -----------------------------
-ALPHA_VANTAGE_API_KEY = "9EJ41V9XS6Q5ZN1Y"  # Replace with your key
+# Preferred: set environment variable ALPHA_VANTAGE_API_KEY
+# Example (Linux/Mac): export ALPHA_VANTAGE_API_KEY="your_key"
+ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY", "9EJ41V9XS6Q5ZN1Y")
 
 # -----------------------------
 # Streamlit App Setup
@@ -26,70 +28,106 @@ st.title("📈 Stock Sentiment + Price Prediction Dashboard")
 st.write("Predict stock trends using sentiment and a simple deep learning model.")
 
 # -----------------------------
-# Cached heavy resources
+# Caching: resources vs data
+# - Use st.cache_resource for heavy non-hashable objects (pipelines, clients)
+# - Use st.cache_data for pure-data functions
 # -----------------------------
 @st.cache_resource
 def get_hf_pipeline():
+    """Return a HuggingFace sentiment pipeline (cached as a resource)."""
     device = 0 if torch.cuda.is_available() else -1
     try:
         return pipeline("sentiment-analysis", device=device)
-    except:
+    except Exception:
+        # Fallback to CPU if something goes wrong
         return pipeline("sentiment-analysis", device=-1)
+
 
 hf_pipeline = get_hf_pipeline()
 
+
 @st.cache_resource
 def get_gnews_client():
-    return GNews(language="en", max_results=10)
+    # keep as a cached resource
+    try:
+        return GNews(language="en", max_results=10)
+    except Exception:
+        return None
+
 
 gnews_client = get_gnews_client()
 
+
 # -----------------------------
-# Hybrid News Fetcher (Fix 3)
+# Fetch News (hybrid: GNews search -> Google RSS)
 # -----------------------------
-@st.cache_data(ttl=60 * 30)
+@st.cache_data(ttl=60 * 30)  # cache for 30 minutes
 def fetch_news(symbol: str):
     """
     Hybrid news fetcher:
-    1) Try GNews search
-    2) If GNews returns empty → fallback to Google News RSS
+    1) Try GNews search (preferred)
+    2) If empty or error -> fallback to Google News RSS
+    Returns a list of dicts with 'title' and 'description'.
     """
     news = []
 
-    # Try GNews first
+    # 1) Try GNews search (if client available)
     try:
-        gnews_results = gnews_client.get_news_by_search(symbol)
-        if gnews_results:
-            news.extend(gnews_results)
-    except:
+        if gnews_client is not None:
+            # use search-based method which is more reliable for keywords/tickers
+            try:
+                # many gnews clients expose get_news_by_search; fall back to get_news if needed
+                gnews_results = None
+                if hasattr(gnews_client, "get_news_by_search"):
+                    gnews_results = gnews_client.get_news_by_search(symbol)
+                elif hasattr(gnews_client, "get_news"):
+                    # older interface
+                    gnews_results = gnews_client.get_news(symbol)
+
+                if gnews_results:
+                    # ensure we extract title/description
+                    for item in gnews_results:
+                        title = item.get("title") if isinstance(item, dict) else getattr(item, "title", "")
+                        desc = item.get("description") if isinstance(item, dict) else getattr(item, "description", "")
+                        news.append({"title": title or "", "description": desc or ""})
+            except Exception:
+                # ignore GNews-specific errors and fall through to RSS
+                pass
+    except Exception:
         pass
 
-    # Fallback to Google News RSS
+    # 2) Fallback: Google News RSS if still empty
     if len(news) == 0:
         try:
-            rss_url = f"https://news.google.com/rss/search?q={symbol}+stock&hl=en-IN&gl=IN&ceid=IN:en"
+            # Use a query that biases toward financial coverage
+            query = f"{symbol} stock"
+            rss_url = f"https://news.google.com/rss/search?q={query}&hl=en-IN&gl=IN&ceid=IN:en"
             feed = feedparser.parse(rss_url)
-
             for entry in feed.entries:
-                news.append({
-                    "title": entry.title,
-                    "description": entry.summary
-                })
+                title = getattr(entry, "title", "")
+                # some entries may have 'summary' or 'description'
+                desc = getattr(entry, "summary", "") or getattr(entry, "description", "")
+                news.append({"title": title or "", "description": desc or ""})
         except Exception as e:
+            # Return empty list but show warning in app
             st.warning(f"RSS news fetch error: {e}")
             return []
 
     return news
 
+
 # -----------------------------
-# Fetch Stock Data (unchanged)
+# Fetch Stock Data (cached)
 # -----------------------------
-@st.cache_data(ttl=60 * 10)
+@st.cache_data(ttl=60 * 10)  # cache for 10 minutes
 def fetch_stock_data(symbol: str):
+    """
+    Fetch daily stock data from Alpha Vantage and return a cleaned DataFrame sorted by date ascending.
+    """
     try:
         ts = TimeSeries(key=ALPHA_VANTAGE_API_KEY, output_format="pandas")
         data, _ = ts.get_daily(symbol=symbol, outputsize="compact")
-
+        # Rename columns to friendly names
         data = data.rename(
             columns={
                 "1. open": "Open",
@@ -101,38 +139,46 @@ def fetch_stock_data(symbol: str):
         )
         data.index = pd.to_datetime(data.index)
         data = data.sort_index()
-
+        # Convert to numeric (AlphaVantage returns strings)
         data[["Open", "High", "Low", "Close", "Volume"]] = data[
             ["Open", "High", "Low", "Close", "Volume"]
         ].apply(pd.to_numeric, errors="coerce")
-
         data = data.dropna()
         return data
     except Exception as e:
         st.error(f"Failed to fetch stock data for {symbol}: {e}")
         return pd.DataFrame()
 
+
 # -----------------------------
-# Sentiment Tools
+# Sentiment helpers
 # -----------------------------
 @st.cache_data
 def get_textblob_sentiment(text: str) -> float:
+    """Compute sentiment polarity using TextBlob. Returns float in [-1,1]."""
     try:
         return TextBlob(text).sentiment.polarity
-    except:
+    except Exception:
         return 0.0
 
+
 def get_hf_label_value(label: str) -> int:
+    """Map HF label to numeric value."""
     if label.upper().startswith("POS"):
         return 1
     if label.upper().startswith("NEG"):
         return -1
     return 0
 
+
 # -----------------------------
-# Simple Torch Regression Model
+# Simple PyTorch Regression Model (training)
 # -----------------------------
 def train_model(X: torch.Tensor, y: torch.Tensor, epochs: int = 150, lr: float = 0.01):
+    """
+    Train a simple linear regressor. X: (N, F), y: (N, 1)
+    Returns trained model (nn.Module).
+    """
     model = nn.Linear(X.shape[1], 1)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
     loss_fn = nn.MSELoss()
@@ -144,73 +190,111 @@ def train_model(X: torch.Tensor, y: torch.Tensor, epochs: int = 150, lr: float =
         loss = loss_fn(y_pred, y)
         loss.backward()
         opt.step()
-
     return model
 
+
 # -----------------------------
-# Analyze Stock
+# Analyze Stock function
 # -----------------------------
 def analyze_stock(symbol: str):
+    # 1) Get stock data
     df = fetch_stock_data(symbol)
     if df.empty:
         raise RuntimeError("No stock data available.")
 
-    # Fetch news
+    # 2) Get news + sentiment
     news = fetch_news(symbol)
     sentiments = []
     for n in news:
-        title = n.get("title", "")
-        desc = n.get("description", "")
-        text = f"{title} {desc}".strip()
-
+        title = n.get("title") or ""
+        desc = n.get("description") or ""
+        text = (title + " " + desc).strip()
         if not text:
             continue
 
+        # TextBlob polarity
         tb = get_textblob_sentiment(text)
 
-        try:
-            hf_res = hf_pipeline(text[:512])
-            hf_label = hf_res[0]["label"] if hf_res else "NEUTRAL"
-        except:
-            hf_label = "NEUTRAL"
+        # If user selected lightweight mode (TextBlob only), use tb-based bucket
+        if use_light_mode:
+            # thresholds can be tuned
+            if tb > 0.1:
+                val = 1
+            elif tb < -0.1:
+                val = -1
+            else:
+                val = 0
+        else:
+            # HuggingFace label (truncate to avoid very long text)
+            try:
+                hf_res = hf_pipeline(text[:512])
+                hf_label = hf_res[0]["label"] if hf_res and isinstance(hf_res, list) else "NEUTRAL"
+            except Exception:
+                hf_label = "NEUTRAL"
+            val = get_hf_label_value(hf_label)
 
-        sentiments.append((text, tb, get_hf_label_value(hf_label)))
+        sentiments.append((text, tb, val))
 
-    sent_df = (
-        pd.DataFrame(sentiments, columns=["Text", "TextBlob", "HF_Sentiment"])
-        if sentiments
-        else pd.DataFrame(columns=["Text", "TextBlob", "HF_Sentiment"])
-    )
+    if len(sentiments) == 0:
+        sent_df = pd.DataFrame(columns=["Text", "TextBlob", "HF_Sentiment"])
+    else:
+        sent_df = pd.DataFrame(sentiments, columns=["Text", "TextBlob", "HF_Sentiment"])
 
-    avg_sentiment = (
-        float(pd.concat([sent_df["TextBlob"], sent_df["HF_Sentiment"]], axis=1).mean().mean())
-        if not sent_df.empty
-        else 0.0
-    )
+    # Compute average sentiment safely
+    if not sent_df.empty:
+        # compute mean of columns that exist
+        cols_to_avg = []
+        if "TextBlob" in sent_df.columns:
+            cols_to_avg.append(sent_df["TextBlob"])
+        if "HF_Sentiment" in sent_df.columns:
+            cols_to_avg.append(sent_df["HF_Sentiment"])
+        if cols_to_avg:
+            avg_sentiment = float(pd.concat(cols_to_avg, axis=1).mean().mean())
+        else:
+            avg_sentiment = 0.0
+    else:
+        avg_sentiment = 0.0
 
+    # 3) Prepare data for model
+    # Use recent window features (Open, High, Low, Volume) -> predict Close
     df["Return"] = df["Close"].pct_change()
     df = df.dropna()
+    # Ensure numeric columns exist
+    features = ["Open", "High", "Low", "Volume"]
+    for f in features:
+        if f not in df.columns:
+            raise RuntimeError(f"Missing expected feature column: {f}")
 
+    # Scale volume because it tends to be large (simple scaling)
     df["Volume_Scaled"] = df["Volume"] / (df["Volume"].max() + 1e-9)
-
     X_np = df[["Open", "High", "Low", "Volume_Scaled"]].values.astype(np.float32)
     y_np = df["Close"].values.astype(np.float32).reshape(-1, 1)
 
-    X = torch.tensor(X_np)
-    y = torch.tensor(y_np)
+    # Convert to torch tensors
+    X = torch.tensor(X_np, dtype=torch.float32)
+    y = torch.tensor(y_np, dtype=torch.float32)
 
+    # 4) Train model
     model = train_model(X, y)
 
-    last = df.iloc[-1]
-    feat = np.array([
-        last["Open"], last["High"], last["Low"], last["Volume_Scaled"]
-    ], dtype=np.float32).reshape(1, -1)
-
+    # 5) Predict next-day price using last available row
+    last_row = df.iloc[-1]
+    last_feat = np.array(
+        [
+            last_row["Open"],
+            last_row["High"],
+            last_row["Low"],
+            last_row["Volume"] / (df["Volume"].max() + 1e-9),
+        ],
+        dtype=np.float32,
+    )
+    last_tensor = torch.tensor(last_feat.reshape(1, -1), dtype=torch.float32)
+    model.eval()
     with torch.no_grad():
-        next_pred = float(model(torch.tensor(feat)).item())
+        next_pred = float(model(last_tensor).item())
 
+    # 6) Final suggestion combines price movement and average sentiment
     last_close = float(df["Close"].iloc[-1])
-
     suggestion = "📈 Hold"
     if next_pred > last_close and avg_sentiment > 0:
         suggestion = "📈 Buy"
@@ -221,11 +305,16 @@ def analyze_stock(symbol: str):
 
     return df, sent_df, next_pred, suggestion, avg_sentiment
 
+
 # -----------------------------
-# UI
+# Streamlit UI
 # -----------------------------
 st.sidebar.header("Inputs")
 symbol = st.sidebar.text_input("Enter Stock Symbol (e.g. AAPL, TSLA, MSFT):", "AAPL")
+
+# Lightweight mode toggle (TextBlob only)
+use_light_mode = st.sidebar.checkbox("Use Lightweight Sentiment (TextBlob only)", value=False)
+
 analyze_button = st.sidebar.button("Analyze")
 
 if analyze_button:
@@ -233,8 +322,7 @@ if analyze_button:
         with st.spinner("Fetching data and running analysis..."):
             df, sent_df, next_pred, suggestion, avg_sentiment = analyze_stock(symbol)
 
-        st.success(f"Analysis Complete for {symbol}")
-
+        st.success(f"✅ Analysis Complete for {symbol}")
         col1, col2, col3 = st.columns(3)
         col1.metric("Predicted Next-Day Close", f"${next_pred:.2f}")
         col2.metric("Last Close", f"${df['Close'].iloc[-1]:.2f}")
@@ -243,10 +331,10 @@ if analyze_button:
         st.markdown("### Trading Suggestion")
         st.info(suggestion)
 
-        st.subheader("Recent Stock Prices")
+        st.subheader("Recent Stock Prices (Close)")
         st.line_chart(df["Close"])
 
-        st.subheader("Sentiment Summary")
+        st.subheader("Sentiment Summary (recent articles)")
         st.dataframe(sent_df)
 
         if not sent_df.empty:
@@ -255,12 +343,12 @@ if analyze_button:
             ax.set_title("TextBlob Polarity Distribution")
             st.pyplot(fig)
         else:
-            st.write("No news articles found.")
+            st.write("No recent news articles found to compute sentiment.")
 
     except Exception as e:
         st.error(f"Analysis failed: {e}")
 else:
-    st.info("Enter a symbol and click Analyze.")
+    st.info("Enter a symbol and click Analyze (left).")
 
 # Footer
 st.markdown("---")
